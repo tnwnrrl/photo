@@ -48,9 +48,12 @@ python gui.py
 
 **GUI 기능:**
 - ▶ 모니터링 시작/종료 버튼
+- 🔄 카메라 재연결 버튼 (연결 문제 시 즉시 해결)
+- 📁 폴더 및 오버레이 이미지 선택 (설정 자동 저장)
 - 📊 실시간 처리 통계 (다운로드/합성/오류)
 - 📝 실시간 로그 출력
 - 🎛️ 5초 간격 자동 감지
+- 🧹 시작/종료 시 카메라 프로세스 자동 정리
 
 **사용 단계:**
 1. Canon 100D를 USB로 연결하고 전원 켜기
@@ -150,7 +153,18 @@ python create_overlay.py
 ❌ 카메라 연결 실패: [-53] Could not claim the USB device
 ```
 
-**해결 방법:**
+**자동 해결 스크립트 (권장):**
+```bash
+./fix_camera.sh
+```
+
+이 스크립트는 자동으로:
+- 카메라를 점유하는 모든 macOS 프로세스 종료
+- 재시작된 프로세스 재종료
+- 카메라 연결 테스트
+- 실패 시 USB 재연결 가이드 제공
+
+**수동 해결 방법:**
 1. USB 케이블 확인
 2. 카메라 전원 확인
 3. macOS Photos 또는 Image Capture 앱 종료
@@ -159,7 +173,12 @@ python create_overlay.py
 ```bash
 killall "Image Capture"
 killall ptpcamerad
+killall icdd
+killall cameracaptured
+pkill -f "mscamerad"
 ```
+
+**⚠️ 주의:** macOS 시스템 프로세스가 자동으로 재시작되므로, 연결이 계속 실패하면 USB 케이블을 물리적으로 뽑았다가 다시 연결하는 것이 가장 확실한 해결 방법입니다.
 
 ### gphoto2 모듈 임포트 실패
 
