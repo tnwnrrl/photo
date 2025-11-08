@@ -415,6 +415,11 @@ class PhotoProcessorGUI:
         if self.is_monitoring:
             self.stop_monitoring()
 
+        # 카메라 점유 프로세스 종료
+        self.log("🧹 카메라 프로세스 정리 중...")
+        kill_camera_processes()
+        self.log("✅ 프로그램 종료")
+
         self.root.quit()
 
 
