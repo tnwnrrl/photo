@@ -9,7 +9,7 @@ Canon 100D 사진 자동 처리 GUI 프로그램
 """
 
 import tkinter as tk
-from tkinter import ttk, scrolledtext
+from tkinter import ttk, scrolledtext, filedialog
 import threading
 import queue
 import sys
@@ -26,7 +26,7 @@ class PhotoProcessorGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Canon 100D 사진 자동 처리")
-        self.root.geometry("800x600")
+        self.root.geometry("800x700")
 
         # 상태 변수
         self.is_monitoring = False
@@ -60,6 +60,15 @@ class PhotoProcessorGUI:
         self.check_interval = self.config['camera']['check_interval_seconds']
         self.processed_files_db = self.config['monitoring']['processed_files_db']
 
+    def save_config(self):
+        """설정 파일 저장"""
+        self.config['paths']['original_folder'] = self.original_folder
+        self.config['paths']['overlay_image'] = self.overlay_image
+        self.config['paths']['output_folder'] = self.output_folder
+
+        with open('config.json', 'w', encoding='utf-8') as f:
+            json.dump(self.config, f, indent=2, ensure_ascii=False)
+
     def create_widgets(self):
         """UI 위젯 생성"""
         # 상단 프레임 - 제목
@@ -72,6 +81,43 @@ class PhotoProcessorGUI:
             font=("Helvetica", 16, "bold")
         )
         title_label.pack()
+
+        # 설정 프레임
+        settings_frame = ttk.LabelFrame(self.root, text="설정", padding="10")
+        settings_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # 다운로드 폴더
+        download_frame = ttk.Frame(settings_frame)
+        download_frame.pack(fill=tk.X, pady=2)
+
+        ttk.Label(download_frame, text="다운로드 폴더:", width=15).pack(side=tk.LEFT)
+        self.download_folder_var = tk.StringVar(value=self.original_folder)
+        download_entry = ttk.Entry(download_frame, textvariable=self.download_folder_var, width=40)
+        download_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(download_frame, text="찾아보기",
+                   command=lambda: self.browse_folder(self.download_folder_var, 'original_folder')).pack(side=tk.LEFT)
+
+        # 출력 폴더
+        output_frame = ttk.Frame(settings_frame)
+        output_frame.pack(fill=tk.X, pady=2)
+
+        ttk.Label(output_frame, text="출력 폴더:", width=15).pack(side=tk.LEFT)
+        self.output_folder_var = tk.StringVar(value=self.output_folder)
+        output_entry = ttk.Entry(output_frame, textvariable=self.output_folder_var, width=40)
+        output_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(output_frame, text="찾아보기",
+                   command=lambda: self.browse_folder(self.output_folder_var, 'output_folder')).pack(side=tk.LEFT)
+
+        # 오버레이 이미지
+        overlay_frame = ttk.Frame(settings_frame)
+        overlay_frame.pack(fill=tk.X, pady=2)
+
+        ttk.Label(overlay_frame, text="오버레이 이미지:", width=15).pack(side=tk.LEFT)
+        self.overlay_image_var = tk.StringVar(value=self.overlay_image)
+        overlay_entry = ttk.Entry(overlay_frame, textvariable=self.overlay_image_var, width=40)
+        overlay_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(overlay_frame, text="찾아보기",
+                   command=self.browse_overlay_file).pack(side=tk.LEFT)
 
         # 상태 프레임
         status_frame = ttk.LabelFrame(self.root, text="상태", padding="10")
@@ -289,6 +335,40 @@ class PhotoProcessorGUI:
         """처리된 파일 목록 저장"""
         with open(self.processed_files_db, 'w') as f:
             json.dump(list(processed_files), f, indent=2)
+
+    def browse_folder(self, var, config_key):
+        """폴더 선택 다이얼로그"""
+        current_path = var.get()
+        folder_path = filedialog.askdirectory(
+            title="폴더 선택",
+            initialdir=current_path if os.path.exists(current_path) else "."
+        )
+
+        if folder_path:
+            var.set(folder_path)
+            # 설정 업데이트
+            if config_key == 'original_folder':
+                self.original_folder = folder_path
+            elif config_key == 'output_folder':
+                self.output_folder = folder_path
+
+            self.save_config()
+            self.log(f"✅ {config_key} 경로 변경: {folder_path}")
+
+    def browse_overlay_file(self):
+        """오버레이 파일 선택 다이얼로그"""
+        current_path = self.overlay_image_var.get()
+        file_path = filedialog.askopenfilename(
+            title="PNG 파일 선택",
+            initialdir=os.path.dirname(current_path) if os.path.exists(current_path) else ".",
+            filetypes=[("PNG 파일", "*.png"), ("모든 파일", "*.*")]
+        )
+
+        if file_path:
+            self.overlay_image_var.set(file_path)
+            self.overlay_image = file_path
+            self.save_config()
+            self.log(f"✅ 오버레이 이미지 변경: {file_path}")
 
     def quit_app(self):
         """프로그램 종료"""
