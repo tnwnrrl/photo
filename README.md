@@ -40,7 +40,17 @@ pip install -r requirements.txt
 
 ## 사용 방법
 
-### GUI 모드 (권장)
+### 더블클릭 실행 (가장 간편) ⭐ 권장
+
+**GUI 실행:**
+- Finder에서 `run_gui.command` 더블클릭
+- 터미널이 열리며 자동으로 GUI 실행
+
+**카메라 연결 문제 해결:**
+- Finder에서 `fix_camera.command` 더블클릭
+- 카메라 프로세스 자동 정리 및 연결 테스트
+
+### GUI 모드 (터미널 사용)
 
 ```bash
 python gui.py
@@ -153,7 +163,12 @@ python create_overlay.py
 ❌ 카메라 연결 실패: [-53] Could not claim the USB device
 ```
 
-**자동 해결 스크립트 (권장):**
+**자동 해결 방법 (권장):**
+
+**더블클릭 실행:**
+- Finder에서 `fix_camera.command` 더블클릭
+
+**터미널 실행:**
 ```bash
 ./fix_camera.sh
 ```
