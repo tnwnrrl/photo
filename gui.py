@@ -15,9 +15,20 @@ import queue
 import sys
 import os
 import json
+import subprocess
 from datetime import datetime
 from utils.camera import CameraConnection
 from utils.image_processor import ImageProcessor
+
+
+def kill_camera_processes():
+    """카메라를 점유하고 있는 프로세스 종료"""
+    try:
+        subprocess.run(['killall', 'Image Capture'], stderr=subprocess.DEVNULL)
+        subprocess.run(['killall', 'ptpcamerad'], stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        return False
 
 
 class PhotoProcessorGUI:
@@ -168,6 +179,13 @@ class PhotoProcessorGUI:
             state=tk.DISABLED
         )
         self.stop_button.pack(side=tk.LEFT, padx=5)
+
+        self.reconnect_button = ttk.Button(
+            control_frame,
+            text="🔄 카메라 재연결",
+            command=self.reconnect_camera
+        )
+        self.reconnect_button.pack(side=tk.LEFT, padx=5)
 
         ttk.Label(control_frame, text=f"감지 간격: {self.check_interval}초").pack(side=tk.LEFT, padx=20)
 
@@ -370,6 +388,28 @@ class PhotoProcessorGUI:
             self.save_config()
             self.log(f"✅ 오버레이 이미지 변경: {file_path}")
 
+    def reconnect_camera(self):
+        """카메라 재연결 시도"""
+        self.log("🔄 카메라 재연결 시도 중...")
+
+        # 1. 카메라 점유 프로세스 종료
+        kill_camera_processes()
+        self.log("  ✓ 카메라 점유 프로세스 종료")
+
+        # 2. 잠시 대기
+        import time
+        time.sleep(2)
+
+        # 3. 카메라 연결 테스트
+        try:
+            with CameraConnection() as camera:
+                if camera.is_connected:
+                    self.log(f"✅ 카메라 재연결 성공: {camera.camera_name}")
+                else:
+                    self.log("❌ 카메라 재연결 실패")
+        except Exception as e:
+            self.log(f"❌ 카메라 재연결 오류: {e}")
+
     def quit_app(self):
         """프로그램 종료"""
         if self.is_monitoring:
@@ -384,6 +424,11 @@ def main():
     if not os.path.exists("config.json"):
         print("❌ config.json 파일을 찾을 수 없습니다.")
         sys.exit(1)
+
+    # 카메라 점유 프로세스 자동 종료
+    print("🔄 카메라 점유 프로세스 확인 중...")
+    kill_camera_processes()
+    print("✅ 카메라 점유 프로세스 종료 완료")
 
     # GUI 실행
     root = tk.Tk()
