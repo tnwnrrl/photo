@@ -5,7 +5,7 @@
   },
   "paths": {
     "original_folder": "downloaded_photos",
-    "overlay_image": "overlay.png",
+    "overlay_image": "/Users/jjh/Downloads/135cadf5-c0d3-4dd5-9067-70c25d5624ba.png",
     "output_folder": "processed_photos"
   },
   "processing": {

@@ -22,10 +22,14 @@ from utils.image_processor import ImageProcessor
 
 
 def kill_camera_processes():
-    """카메라를 점유하고 있는 프로세스 종료"""
+    """카메라를 점유하고 있는 프로세스 강제 종료 (start.command와 동일)"""
     try:
-        subprocess.run(['killall', 'Image Capture'], stderr=subprocess.DEVNULL)
-        subprocess.run(['killall', 'ptpcamerad'], stderr=subprocess.DEVNULL)
+        # start.command와 동일한 강력한 프로세스 정리
+        subprocess.run(['pkill', '-9', '-f', 'ptpcamerad'], stderr=subprocess.DEVNULL)
+        subprocess.run(['pkill', '-9', '-f', 'mscamerad'], stderr=subprocess.DEVNULL)
+        subprocess.run(['pkill', '-9', '-f', 'icdd'], stderr=subprocess.DEVNULL)
+        subprocess.run(['pkill', '-9', '-f', 'cameracaptured'], stderr=subprocess.DEVNULL)
+        subprocess.run(['killall', '-9', 'Image Capture'], stderr=subprocess.DEVNULL)
         return True
     except Exception:
         return False
@@ -287,60 +291,71 @@ class PhotoProcessorGUI:
         # 이미지 프로세서 초기화
         image_processor = ImageProcessor(self.overlay_image)
 
-        while self.is_monitoring:
-            try:
-                self.log("카메라 확인 중...")
+        # 카메라 연결 (한 번만)
+        camera = CameraConnection()
+        if not camera.connect():
+            self.log("❌ 카메라 연결 실패")
+            self.root.after(0, self.stop_monitoring)
+            return
 
-                with CameraConnection() as camera:
-                    if not camera.is_connected:
-                        self.log("❌ 카메라 연결 실패")
+        self.log(f"✅ 카메라 연결 유지: {camera.camera_name}")
+
+        while self.is_monitoring:
+            new_files = []
+
+            try:
+                # 연결 상태 확인
+                if not camera.is_connected:
+                    self.log("⚠️ 카메라 연결 끊김, 재연결 시도...")
+                    if not camera.connect():
+                        self.log("❌ 재연결 실패")
                         time.sleep(self.check_interval)
                         continue
 
-                    # 새 파일 다운로드
-                    all_files = camera.get_all_files()
-                    new_files = []
+                # 새 파일 확인 및 다운로드
+                all_files = camera.get_all_files()
 
-                    for file_info in all_files:
-                        if file_info['full_path'] in processed_files:
-                            continue
+                for file_info in all_files:
+                    if file_info['full_path'] in processed_files:
+                        continue
 
-                        if camera.download_file(file_info, self.original_folder):
-                            new_files.append(file_info['name'])
-                            processed_files.add(file_info['full_path'])
-                            self.stats['downloaded'] += 1
-                            self.log(f"  ✅ {file_info['name']} 다운로드 완료")
+                    if camera.download_file(file_info, self.original_folder):
+                        new_files.append(file_info['name'])
+                        processed_files.add(file_info['full_path'])
+                        self.stats['downloaded'] += 1
+                        self.log(f"  ✅ {file_info['name']} 다운로드 완료")
 
-                    if new_files:
-                        self.log(f"✅ 새 파일 {len(new_files)}개 발견!")
+                # 합성 처리
+                if new_files:
+                    self.log(f"✅ 새 파일 {len(new_files)}개 발견!")
 
-                        # PNG 합성 처리
-                        for filename in new_files:
-                            input_path = os.path.join(self.original_folder, filename)
-                            output_path = os.path.join(self.output_folder, filename)
+                    for filename in new_files:
+                        input_path = os.path.join(self.original_folder, filename)
+                        output_path = os.path.join(self.output_folder, filename)
 
-                            if image_processor.composite_image(input_path, output_path):
-                                self.stats['processed'] += 1
-                                self.log(f"  🖼️ {filename} 합성 완료")
-                            else:
-                                self.stats['errors'] += 1
-                                self.log(f"  ❌ {filename} 합성 실패")
+                        if image_processor.composite_image(input_path, output_path):
+                            self.stats['processed'] += 1
+                            self.log(f"  🖼️ {filename} 합성 완료")
+                        else:
+                            self.stats['errors'] += 1
+                            self.log(f"  ❌ {filename} 합성 실패")
 
-                        # 통계 업데이트
-                        self.root.after(0, self.update_stats)
-
-                        # 처리된 파일 목록 저장
-                        self.save_processed_files(processed_files)
-                    else:
-                        self.log("  ✓ 새 파일 없음")
+                    self.root.after(0, self.update_stats)
+                    self.save_processed_files(processed_files)
 
             except Exception as e:
                 self.log(f"❌ 오류: {e}")
                 self.stats['errors'] += 1
                 self.root.after(0, self.update_stats)
+                # 오류 시 연결 상태 리셋
+                camera.is_connected = False
 
             # 대기
             time.sleep(self.check_interval)
+
+        # 모니터링 종료 시 연결 해제
+        camera.disconnect()
+        self.log("📴 카메라 연결 해제")
 
     def load_processed_files(self):
         """처리된 파일 목록 로드"""
@@ -388,36 +403,64 @@ class PhotoProcessorGUI:
             self.save_config()
             self.log(f"✅ 오버레이 이미지 변경: {file_path}")
 
+            # 모니터링 중이면 자동 재시작 (새 오버레이 적용)
+            if self.is_monitoring:
+                self.log("🔄 오버레이 변경 적용을 위해 모니터링 재시작 중...")
+                was_monitoring = True
+                self.stop_monitoring()
+                # 스레드 종료 대기
+                import time
+                time.sleep(1)
+                self.start_monitoring()
+                self.log("✅ 새 오버레이 이미지로 모니터링 재시작 완료")
+
     def reconnect_camera(self):
-        """카메라 재연결 시도"""
-        self.log("🔄 카메라 재연결 시도 중...")
-
-        # 1. 카메라 점유 프로세스 종료
-        kill_camera_processes()
-        self.log("  ✓ 카메라 점유 프로세스 종료")
-
-        # 2. 잠시 대기
+        """카메라 재연결 시도 (start.command와 동일한 3회 재시도)"""
         import time
-        time.sleep(2)
 
-        # 3. 카메라 연결 테스트
-        try:
-            with CameraConnection() as camera:
-                if camera.is_connected:
+        self.log("🔄 카메라 재연결 시도 중...")
+        self.log("  🔧 카메라 프로세스 정리...")
+
+        MAX_ATTEMPTS = 3
+        connected = False
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            self.log(f"  시도 {attempt}/{MAX_ATTEMPTS}...")
+
+            # 1. 카메라 프로세스 강제 종료
+            kill_camera_processes()
+            time.sleep(1)
+
+            # 2. 카메라 연결 시도
+            try:
+                camera = CameraConnection()
+                if camera.connect():
                     self.log(f"✅ 카메라 재연결 성공: {camera.camera_name}")
-                else:
-                    self.log("❌ 카메라 재연결 실패")
-        except Exception as e:
-            self.log(f"❌ 카메라 재연결 오류: {e}")
+                    camera.disconnect()
+                    connected = True
+                    break
+            except Exception as e:
+                self.log(f"   ❌ 실패: {e}")
+
+            # 재시도 전 프로세스 재정리 및 대기
+            if attempt < MAX_ATTEMPTS:
+                kill_camera_processes()
+                time.sleep(2)
+
+        if not connected:
+            self.log("❌ 카메라 재연결 실패 (3회 시도 모두 실패)")
+            self.log("💡 해결 방법: USB 케이블을 뽑았다가 다시 연결 후 재시도")
 
     def quit_app(self):
-        """프로그램 종료"""
+        """프로그램 종료 (start.command와 동일한 강력한 프로세스 정리)"""
         if self.is_monitoring:
             self.stop_monitoring()
 
-        # 카메라 점유 프로세스 종료
-        self.log("🧹 카메라 프로세스 정리 중...")
+        # 카메라 점유 프로세스 강제 종료 (start.command와 동일)
+        self.log("🧹 카메라 프로세스 강제 정리 중...")
+        self.log("  🔧 ptpcamerad, mscamerad, icdd, cameracaptured, Image Capture 종료...")
         kill_camera_processes()
+        self.log("  ✅ 모든 카메라 프로세스 정리 완료")
         self.log("✅ 프로그램 종료")
 
         self.root.quit()

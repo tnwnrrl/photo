@@ -40,6 +40,7 @@ htmlcov/
 .LSOverride
 
 # Project specific
+config.json         # 사용자별 경로 설정 포함
 config.json.backup
 test_images/
 output/
