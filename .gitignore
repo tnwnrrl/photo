@@ -49,3 +49,6 @@ gui.log
 processed_files.json
 downloaded_photos/
 processed_photos/
+
+# Tools
+.serena/
