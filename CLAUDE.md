@@ -1,225 +1,112 @@
-# Canon 100D Photo Processing System - Development Guide
+# CLAUDE.md
 
-**For AI assistants working on this codebase**
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
 
-Python application that monitors a Canon EOS 100D camera via USB, automatically downloads new photos, and composites them with a PNG overlay layer. Features a tkinter GUI for user control and persistent configuration.
+Canon EOS 100D 카메라 모니터링 앱. USB로 사진 자동 다운로드 후 AI 변환(나노바나나) 또는 PNG 오버레이 합성. tkinter GUI 제공.
 
-## Common Commands
+## Commands
 
 ```bash
-# Launch application (recommended)
+# 앱 실행 (권장)
 ./start.command
 
-# Manual GUI launch
-./venv/bin/python gui.py
+# 수동 GUI 실행
+python3 gui.py
 
-# Build macOS executable
-./build_mac.sh
-
-# Test camera connection
-./venv/bin/python -c "
+# 카메라 연결 테스트
+python3 -c "
 from utils.camera import CameraConnection
 camera = CameraConnection()
 print('✅ Connected' if camera.connect() else '❌ Failed')
 camera.disconnect()
 "
+
+# AI 변환 테스트 (나노바나나)
+python3 test_nanobanana.py
+
+# macOS 빌드
+./build_mac.sh
+
+# 의존성 설치
+brew install libgphoto2 pkg-config
+pip install -r requirements.txt
+pip install google-genai  # AI 변환용
 ```
 
 ## Architecture
-
-### Core Components
-
-**gui.py** - Main application entry point
-- `PhotoProcessorGUI` class: tkinter-based GUI with monitoring controls
-- Path selection UI for folders and overlay image (persistent via config.json)
-- Reconnect button with automatic camera process cleanup
-- Real-time log display using ScrolledText widget
-- Monitoring loop runs in separate thread to prevent GUI freeze
-
-**main.py** - CLI processing logic (can run standalone or via GUI)
-- `PhotoProcessor` class: Core monitoring and processing orchestration
-- Reads config.json for all paths and settings
-- Maintains processed_files.json to prevent duplicate processing
-- 5-second polling loop checking for new camera files
-
-**utils/camera.py** - Canon camera interface
-- `CameraConnection` class: gphoto2 wrapper with context manager support
-- `get_all_files()`: Lists all JPEG files on camera
-- `download_file()`: Downloads specific file to local folder
-- Handles gphoto2 errors gracefully
-
-**utils/image_processor.py** - Image composition engine
-- `ImageProcessor` class: Pillow-based PNG overlay composition
-- Handles automatic image resizing (overlay resized to match base photo)
-- RGBA alpha compositing for transparency preservation
-- Saves with JPEG quality=95 for high-quality output
-
-### Data Flow
 
 ```
 Camera (Canon 100D)
     ↓ USB (gphoto2)
 CameraConnection.get_all_files()
     ↓
-PhotoProcessor.process_new_photos()
-    ↓ Download to original_folder
-CameraConnection.download_file()
+gui.py monitoring_loop()
+    ↓ Download to downloaded_photos/
     ↓
-ImageProcessor.add_overlay()
-    ↓ Composite with overlay.png
-Save to output_folder
+┌───────────────────────────────────────┐
+│ 처리 방식 선택                          │
+├───────────────────────────────────────┤
+│ [AI 변환]              [오버레이 합성]   │
+│ AITransformer         ImageProcessor  │
+│ (Gemini 2.5 Flash)    (Pillow RGBA)   │
+└───────────────────────────────────────┘
     ↓
-Update processed_files.json
+Save to processed_photos/
 ```
 
-### Configuration System
+### Core Files
 
-**config.json** - All runtime settings
-```json
-{
-  "camera": {
-    "model": "Canon EOS 100D",
-    "check_interval_seconds": 5
-  },
-  "paths": {
-    "original_folder": "downloaded_photos",
-    "overlay_image": "overlay.png",
-    "output_folder": "processed_photos"
-  }
-}
-```
+| 파일 | 역할 |
+|------|------|
+| `gui.py` | 메인 진입점. tkinter GUI, 백그라운드 모니터링 스레드 |
+| `utils/camera.py` | `CameraConnection` - gphoto2 래퍼, 연결/다운로드 |
+| `utils/image_processor.py` | `ImageProcessor` - Pillow RGBA 오버레이 합성 |
+| `utils/ai_transformer.py` | `AITransformer` - Gemini API 래퍼 (계획) |
+| `config.json` | 런타임 설정 (경로, 프롬프트, API 키) |
+| `processed_files.json` | 처리 완료 파일 추적 (중복 방지) |
 
-GUI writes to config.json when user changes paths. main.py and gui.py both read from it.
+## macOS Camera Connection Issue
 
-**processed_files.json** - Tracking database
-```json
-{
-  "IMG_1234.JPG": "2025-11-08T10:30:15",
-  "IMG_1235.JPG": "2025-11-08T10:35:22"
-}
-```
+**문제**: macOS 데몬(`ptpcamerad`, `mscamerad-xpc`, `icdd`)이 USB 카메라 자동 점유
 
-Prevents reprocessing same file across application restarts.
+**에러**: `[-53] Could not claim the USB device`
 
-## Critical Technical Constraints
+**해결**: `start.command`가 `pkill -9`로 프로세스 강제 종료 후 3회 재시도. 실패 시 USB 케이블 물리적 재연결.
 
-### macOS Camera Connection Issues
+## AI 변환 (나노바나나)
 
-**Root Cause**: macOS system processes (`ptpcamerad`, `mscamerad-xpc`, `icdd`, `cameracaptured`) automatically claim USB camera devices and restart via launchd when killed.
+**모델**: `gemini-2.5-flash-image` (Google Gemini)
 
-**Error**: `[-53] Could not claim the USB device (GP_ERROR_IO_USB_CLAIM)`
+**비용**: ~$0.039/장 (약 50원), 무료 티어 ~500장/일
 
-**Race Condition**: 50-100ms timing window between process kill and launchd restart. gphoto2 must claim USB device during this window.
+**처리 시간**: ~10초/장
 
-**Solution Strategy** (implemented in start.command):
-1. Kill all camera processes with `pkill -9`
-2. Immediately attempt camera connection
-3. Retry up to 3 times with 2-second delays
-4. Success rate: 70-80%
+**핵심**: 프롬프트에 "원본 얼굴, 옷, 포즈는 절대 바꾸지 마" 필수
 
-**Workarounds**:
-- Physical USB reconnection (5-second wait): 80-90% success
-- Change camera USB mode from PTP to Mass Storage: 90%+ success
-- See TROUBLESHOOTING_ANALYSIS.md for comprehensive analysis
-
-### start.command Implementation
-
-Unified launcher that handles camera connection + GUI launch:
-
-```bash
-# 1. Kill conflicting processes
-pkill -9 -f "ptpcamerad|mscamerad|icdd|cameracaptured"
-killall -9 "Image Capture"
-
-# 2. Retry camera connection (max 3 attempts)
-for attempt in 1..3; do
-  python -c "test camera connection"
-  if success: break
-  pkill camera processes again
-  sleep 2
-done
-
-# 3. Launch GUI if connected
-if connected:
-  ./venv/bin/python gui.py
-else:
-  show error + troubleshooting steps
-```
-
-This is the **primary execution method** - all other launcher scripts have been removed.
-
-## Build System
-
-### macOS Executable
-
-**build_mac.spec** - PyInstaller configuration:
-- Entry point: gui.py
-- Bundled data: config.json, overlay.png, utils/*.py
-- Hidden imports: gphoto2, PIL, PIL._tkinter_finder
-- Output: dist/Canon100D.app (~40MB)
-
-**build_mac.sh** - Automated build:
-```bash
-source venv/bin/activate
-rm -rf build dist
-pyinstaller build_mac.spec --clean
-```
-
-**Windows Build**: Not supported - gphoto2 library unavailable for Windows. See BUILD_INSTRUCTIONS.md for alternatives (Canon SDK, remote camera control).
-
-## Important Known Issues
-
-### Overlay Image Transparency
-
-**Issue**: If overlay.png is RGB mode (no alpha channel), composition will show only the overlay (100% opacity).
-
-**Detection**:
 ```python
+# 테스트 코드 패턴
+from google import genai
+from google.genai import types
 from PIL import Image
-img = Image.open('overlay.png')
-print(img.mode)  # Should be 'RGBA', not 'RGB'
+
+client = genai.Client(api_key="...")
+response = client.models.generate_content(
+    model="gemini-2.5-flash-image",
+    contents=[prompt, Image.open(path)],
+    config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"])
+)
+# 이미지 추출: part.inline_data.data
 ```
 
-**Fix**: Ensure overlay.png is RGBA mode with alpha channel for transparency. Create using `create_overlay.py` or convert existing RGB images.
+## Key Constraints
 
-**Current Code**: image_processor.py line 76-78 assumes RGBA overlay:
-```python
-result = base_image.copy()
-result.paste(overlay, (0, 0), overlay)  # Third arg is alpha mask
-```
+- **macOS only**: gphoto2가 Windows 미지원
+- **JPG only**: RAW 파일 미지원
+- **오버레이 RGBA 필수**: RGB 모드는 투명도 무시
+- **카메라 연결 유지**: 모니터링 중 단일 연결 유지, 중지 시에만 해제
 
-### Camera Connection Reliability
+## Upgrade Plan
 
-Connection may fail on first attempt due to macOS process conflicts. **This is expected behavior**. start.command handles retries automatically.
-
-**User Action Required**: If connection fails after 3 retries, physically reconnect USB cable and re-run start.command.
-
-## Development Workflow
-
-1. **Making Changes**: Work in feature branches, test with `./venv/bin/python gui.py`
-2. **Testing Camera**: Use start.command for realistic connection testing
-3. **Building**: Run `./build_mac.sh` to create standalone app
-4. **Camera Issues**: Check TROUBLESHOOTING_ANALYSIS.md for detailed diagnostics
-
-## Key Files Reference
-
-- **gui.py** (400+ lines): Main GUI application
-- **main.py** (200+ lines): Core processing logic
-- **utils/camera.py** (150+ lines): Canon camera interface
-- **utils/image_processor.py** (100+ lines): Image composition
-- **start.command** (90+ lines): Unified launcher with retry logic
-- **TROUBLESHOOTING_ANALYSIS.md** (340+ lines): Camera connection deep dive
-- **BUILD_INSTRUCTIONS.md**: Executable build documentation
-- **README.md**: User-facing documentation (Korean)
-
-## Dependencies
-
-- gphoto2: Canon camera communication (requires libgphoto2 via Homebrew)
-- Pillow: Image processing and RGBA composition
-- tkinter: GUI framework (bundled with Python)
-
-Install: `pip install -r requirements.txt`
-
-System: `brew install libgphoto2 pkg-config`
+`plan.md` 참조 - PNG 오버레이 → AI 변환(나노바나나)으로 전환 계획
