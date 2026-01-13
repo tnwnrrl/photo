@@ -31,26 +31,32 @@ def check_internet(host: str = "8.8.8.8", port: int = 53, timeout: float = 3.0) 
 
 
 class AITransformer:
-    """AI 이미지 변환 클래스 (Gemini API - requests 직접 호출)"""
-
-    API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+    """AI 이미지 변환 클래스 (Gemini SDK 방식)"""
 
     def __init__(self, config: dict):
         """
         Args:
             config: AI 설정 딕셔너리
                 - api_key: Gemini API 키
-                - model: 모델명 (기본: gemini-2.0-flash-exp)
+                - model: 모델명 (기본: gemini-2.5-flash-image)
                 - prompt: 변환 프롬프트
                 - timeout_seconds: 타임아웃 (기본: 120)
         """
         self.api_key = config.get('api_key', '')
-        self.model = config.get('model', 'gemini-2.0-flash-exp')
+        self.model = config.get('model', 'gemini-2.5-flash-image')
         self.prompt = config.get('prompt', '')
         self.timeout = config.get('timeout_seconds', 120)
+        self.client = None
 
         if self.api_key:
-            print(f"✅ AI 클라이언트 초기화 완료 (모델: {self.model})")
+            try:
+                from google import genai
+                self.client = genai.Client(api_key=self.api_key)
+                print(f"✅ AI 클라이언트 초기화 완료 (모델: {self.model})")
+            except ImportError:
+                print("⚠️ google-genai 패키지가 설치되지 않았습니다.")
+            except Exception as e:
+                print(f"⚠️ AI 클라이언트 초기화 실패: {e}")
         else:
             print("⚠️ AI API 키가 설정되지 않았습니다.")
 
@@ -64,6 +70,9 @@ class AITransformer:
         if not self.api_key:
             return False, "API 키 미설정"
 
+        if not self.client:
+            return False, "SDK 클라이언트 미초기화"
+
         if not self.prompt:
             return False, "프롬프트 미설정"
 
@@ -72,27 +81,9 @@ class AITransformer:
 
         return True, "준비됨"
 
-    def _encode_image(self, image_path: str) -> Tuple[str, str]:
-        """이미지를 base64로 인코딩"""
-        with open(image_path, "rb") as f:
-            data = f.read()
-
-        # MIME 타입 결정
-        ext = os.path.splitext(image_path)[1].lower()
-        mime_types = {
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.png': 'image/png',
-            '.gif': 'image/gif',
-            '.webp': 'image/webp'
-        }
-        mime_type = mime_types.get(ext, 'image/jpeg')
-
-        return base64.b64encode(data).decode('utf-8'), mime_type
-
     def transform_image(self, input_path: str, output_path: str) -> Tuple[bool, str]:
         """
-        이미지를 AI로 변환
+        이미지를 AI로 변환 (SDK 방식)
 
         Args:
             input_path: 입력 이미지 경로
@@ -107,83 +98,42 @@ class AITransformer:
             return False, f"AI 변환 불가: {reason}"
 
         try:
-            # 이미지 base64 인코딩
-            image_data, mime_type = self._encode_image(input_path)
+            from google import genai
+            from google.genai import types
+            from PIL import Image
 
-            # API 요청 구성
-            url = f"{self.API_BASE}/{self.model}:generateContent?key={self.api_key}"
+            # 이미지 로드
+            image = Image.open(input_path)
+            print(f"🔄 AI 변환 중... (모델: {self.model})")
 
-            payload = {
-                "contents": [{
-                    "parts": [
-                        {"text": self.prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": mime_type,
-                                "data": image_data
-                            }
-                        }
-                    ]
-                }],
-                "generationConfig": {
-                    "responseModalities": ["TEXT", "IMAGE"]
-                }
-            }
-
-            headers = {
-                "Content-Type": "application/json"
-            }
-
-            # API 호출
-            print(f"🔄 AI 변환 중... (타임아웃: {self.timeout}초)")
-            response = requests.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=self.timeout
+            # API 호출 (SDK 방식)
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=[self.prompt, image],
+                config=types.GenerateContentConfig(
+                    response_modalities=["TEXT", "IMAGE"]
+                )
             )
 
-            # 응답 처리
-            if response.status_code != 200:
-                error_detail = response.text[:200]
-                if response.status_code == 401:
-                    return False, "API 키 인증 실패"
-                elif response.status_code == 429:
-                    return False, "API 할당량 초과"
-                elif response.status_code == 400:
-                    return False, f"잘못된 요청: {error_detail}"
-                else:
-                    return False, f"API 오류 ({response.status_code}): {error_detail}"
+            # 결과 처리
+            for part in response.parts:
+                if part.inline_data is not None:
+                    # 이미지 데이터 추출
+                    image_data = part.inline_data.data
 
-            result = response.json()
+                    # 출력 폴더 생성
+                    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-            # 응답에서 이미지 추출
-            candidates = result.get('candidates', [])
-            for candidate in candidates:
-                content = candidate.get('content', {})
-                parts = content.get('parts', [])
+                    # 이미지 저장
+                    with open(output_path, "wb") as f:
+                        f.write(image_data)
 
-                for part in parts:
-                    inline_data = part.get('inlineData')
-                    if inline_data:
-                        # 이미지 데이터 추출
-                        image_bytes = base64.b64decode(inline_data['data'])
-
-                        # 출력 폴더 생성
-                        os.makedirs(os.path.dirname(output_path), exist_ok=True)
-
-                        # 이미지 저장
-                        with open(output_path, "wb") as f:
-                            f.write(image_bytes)
-
-                        return True, "AI 변환 완료"
+                    return True, "AI 변환 완료"
 
             return False, "API 응답에 이미지 없음"
 
-        except requests.exceptions.Timeout:
-            return False, f"API 타임아웃 ({self.timeout}초)"
-        except requests.exceptions.ConnectionError:
-            return False, "네트워크 연결 오류"
+        except ImportError:
+            return False, "google-genai 패키지 미설치"
         except Exception as e:
             return False, f"AI 변환 실패: {str(e)}"
 
@@ -195,7 +145,12 @@ class AITransformer:
         """API 키 업데이트"""
         self.api_key = new_key
         if new_key:
-            print(f"✅ API 키 업데이트 완료")
+            try:
+                from google import genai
+                self.client = genai.Client(api_key=new_key)
+                print(f"✅ API 키 업데이트 완료")
+            except Exception as e:
+                print(f"⚠️ API 키 업데이트 실패: {e}")
 
 
 class HybridProcessor:
